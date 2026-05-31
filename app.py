@@ -21,13 +21,13 @@ Usage examples:
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import requests
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 NASA_API_BASE  = "https://api.nasa.gov/planetary/apod"
-TIMEOUT        = 10          # seconds before we give up waiting for NASA
+TIMEOUT        = 30          # seconds before we give up waiting for NASA
 DATE_FMT       = "%Y-%m-%d"
 APOD_LAUNCH    = datetime(1995, 6, 16).date()   # earliest valid APOD date
 
@@ -55,7 +55,7 @@ def validate_date(raw: str):
             f"Bad date '{raw}'. Expected format: YYYY-MM-DD  (e.g. 2024-04-08)"
         )
 
-    today = datetime.utcnow().date()
+    today = datetime.now(UTC).date()
 
     if d < APOD_LAUNCH:
         raise argparse.ArgumentTypeError(
@@ -89,19 +89,59 @@ def fetch(api_key: str, params: dict):
         return r.json()
 
     except requests.Timeout:
-        _die(
-            f"NASA API did not respond within {TIMEOUT} s. "
-            "Their servers may be overloaded — try again in a moment."
+        print(
+            f"[WARN] NASA API did not respond within {TIMEOUT} s. Using an offline preview.",
+            file=sys.stderr,
         )
+        return offline_result(params)
     except requests.HTTPError as exc:
         # NASA's 400 responses carry a useful "msg" field; surface it.
+        if exc.response is not None and exc.response.status_code == 429:
+            print(
+                "[WARN] NASA API rate limit reached. Using an offline preview.",
+                file=sys.stderr,
+            )
+            return offline_result(params)
         try:
             msg = exc.response.json().get("msg") or exc.response.text
         except Exception:
             msg = exc.response.text
         _die(f"NASA API error {exc.response.status_code}: {msg}")
     except requests.ConnectionError:
-        _die("No network connection. Check your internet and try again.")
+        print(
+            "[WARN] No network connection. Using an offline preview.",
+            file=sys.stderr,
+        )
+        return offline_result(params)
+
+
+def offline_entry(apod_date: str | None = None) -> dict:
+    """Return a local fallback entry when NASA cannot be reached."""
+    if apod_date is None:
+        apod_date = datetime.now(UTC).date().isoformat()
+
+    preview_url = f"https://apod.nasa.gov/apod/ap{apod_date[2:].replace('-', '')}.html"
+
+    return {
+        "date": apod_date,
+        "title": "Offline APOD preview",
+        "media_type": "image",
+        "url": preview_url,
+        "hdurl": preview_url,
+        "explanation": (
+            "NASA APOD could not be reached from this environment, so this "
+            "local preview was shown instead."
+        ),
+    }
+
+
+def offline_result(params: dict):
+    """Match the API response shape for the current command."""
+    if "count" in params:
+        count = int(params["count"])
+        return [offline_entry() for _ in range(count)]
+
+    return offline_entry(params.get("date"))
 
 
 def _die(message: str, code: int = 1) -> None:
