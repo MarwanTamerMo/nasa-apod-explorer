@@ -1,0 +1,17 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.env
+.env.*
+*.key
+*.pem
+*.crt
+*.cer
+.DS_Store
